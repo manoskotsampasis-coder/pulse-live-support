@@ -88,4 +88,4 @@ async def setup(ctx):
     view.add_item(TicketSelect())
     await ctx.send("Επίλεξε κατηγορία:", view=view)
 
-bot.run(os.environ.get("DISCORD_TOKEN")
+bot.runos.environ.get("DISCORD_TOKEN")
