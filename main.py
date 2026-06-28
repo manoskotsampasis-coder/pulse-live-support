@@ -2,7 +2,17 @@ import discord
 import os
 from discord import app_commands
 from discord.ext import commands
+from flask import Flask
+from threading import Thread
 
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Zerox is online!"
+
+def run_web_server():
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -11,6 +21,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     await bot.tree.sync()
+    print(f"Logged in as {bot.user}")
 
 @bot.tree.command(name="clear", description="Delete messages")
 @app_commands.checks.has_permissions(manage_messages=True)
@@ -94,4 +105,7 @@ async def nuke(interaction: discord.Interaction):
     await interaction.channel.delete()
     await new_channel.send("Channel nuked")
 
-bot.run(os.environ.get("DISCORD_TOKEN"))
+if __name__ == "__main__":
+    t = Thread(target=run_web_server)
+    t.start()
+    bot.run(os.environ.get("DISCORD_TOKEN"))
