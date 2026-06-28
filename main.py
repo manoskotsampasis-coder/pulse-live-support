@@ -1,91 +1,95 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
-from flask import Flask
-from threading import Thread
-import os
-import datetime
-
-app = Flask(__name__)
-@app.route('/')
-def home(): return "Pulse Pro Suite is Online!"
-Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Database placeholders
-stats = {"total_tickets": 0, "staff_actions": {}, "category_counts": {}}
-ticket_timers = {}
+@bot.event
+async def on_ready():
+    await bot.tree.sync()
 
-class TicketControlView(discord.ui.View):
-    def __init__(self, ticket_author, category):
-        super().__init__(timeout=None)
-        self.ticket_author = ticket_author
-        self.category = category
-        self.start_time = datetime.datetime.now()
+@bot.tree.command(name="clear", description="Delete messages")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def clear(interaction: discord.Interaction, amount: int):
+    await interaction.channel.purge(limit=amount)
+    await interaction.response.send_message(f"Deleted {amount} messages", ephemeral=True)
 
-    @discord.ui.button(label="Claim", style=discord.ButtonStyle.success, custom_id="claim")
-    async def claim(self, interaction: discord.Interaction, button):
-        duration = datetime.datetime.now() - self.start_time
-        stats["staff_actions"][interaction.user.name] = stats["staff_actions"].get(interaction.user.name, 0) + 1
-        embed = discord.Embed(title="✅ Claimed", description=f"Αναλήφθηκε από {interaction.user.name}\nΧρόνος απόκρισης: {duration.seconds}s", color=discord.Color.green())
-        await interaction.response.send_message(embed=embed)
+@bot.tree.command(name="mute", description="Mute a member")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def mute(interaction: discord.Interaction, member: discord.Member):
+    await member.timeout(discord.utils.utcnow() + discord.timedelta(minutes=10))
+    await interaction.response.send_message(f"Muted {member.name}")
 
-    @discord.ui.button(label="Close & Log", style=discord.ButtonStyle.danger, custom_id="close")
-    async def close(self, interaction: discord.Interaction, button):
-        log_channel = interaction.guild.get_channel(123456789012345678) # Βάλε το ID του log channel
-        await interaction.response.send_message("Αποθήκευση logs και κλείσιμο...")
-        # Εδώ θα έμπαινε η λογική για export του chat σε .txt
-        await interaction.channel.delete()
+@bot.tree.command(name="unmute", description="Unmute a member")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def unmute(interaction: discord.Interaction, member: discord.Member):
+    await member.timeout(None)
+    await interaction.response.send_message(f"Unmuted {member.name}")
 
-class TicketSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="Support", emoji="ℹ️"),
-            discord.SelectOption(label="Ban Appeal", emoji="🚫")
-        ]
-        super().__init__(placeholder="Επίλεξε κατηγορία...", options=options)
+@bot.tree.command(name="warn", description="Warn a member")
+@app_commands.checks.has_permissions(kick_members=True)
+async def warn(interaction: discord.Interaction, member: discord.Member, reason: str):
+    await interaction.response.send_message(f"Warned {member.name} for: {reason}")
 
-    async def callback(self, interaction: discord.Interaction):
-        stats["total_tickets"] += 1
-        stats["category_counts"][self.values[0]] = stats["category_counts"].get(self.values[0], 0) + 1
-        
-        # VIP Priority check
-        is_vip = any(role.name.lower() in ["premium", "donor"] for role in interaction.user.roles)
-        ping = "@here" if not is_vip else "@admin"
-        
-        channel = await interaction.guild.create_text_channel(name=f"ticket-{interaction.user.name}")
-        embed = discord.Embed(title="🎫 Ticket Created", color=discord.Color.blue())
-        
-        if self.values[0] == "Ban Appeal":
-            embed.description = "Παρακαλώ απάντησε: 1. Γιατί unban; 2. Discord ID; 3. Ανέβασε screenshot."
-            
-        await channel.send(f"{ping}", embed=embed, view=TicketControlView(interaction.user, self.values[0]))
-        await interaction.response.send_message(f"Ticket: {channel.mention}", ephemeral=True)
+@bot.tree.command(name="lock", description="Lock channel")
+@app_commands.checks.has_permissions(manage_channels=True)
+async def lock(interaction: discord.Interaction):
+    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
+    await interaction.response.send_message("Channel locked")
 
-@bot.command()
-async def bots(ctx):
-    embed = discord.Embed(title="🤖 Pulse Status", color=discord.Color.teal())
-    embed.add_field(name="Latency", value=f"{round(bot.latency*1000)}ms")
-    embed.add_field(name="Uptime", value="24/7 Active")
-    await ctx.send(embed=embed)
+@bot.tree.command(name="unlock", description="Unlock channel")
+@app_commands.checks.has_permissions(manage_channels=True)
+async def unlock(interaction: discord.Interaction):
+    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
+    await interaction.response.send_message("Channel unlocked")
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def stats(ctx):
-    embed = discord.Embed(title="📊 Pulse Analytics", color=discord.Color.dark_blue())
-    embed.add_field(name="Συνολικά Tickets", value=stats["total_tickets"])
-    cat_text = "\n".join([f"{k}: {v}" for k, v in stats["category_counts"].items()])
-    embed.add_field(name="Δημοφιλή", value=cat_text)
-    await ctx.send(embed=embed)
+@bot.tree.command(name="serverinfo", description="Server info")
+async def serverinfo(interaction: discord.Interaction):
+    await interaction.response.send_message(f"Server: {interaction.guild.name} | Members: {interaction.guild.member_count}")
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def setup(ctx):
-    view = discord.ui.View(timeout=None)
-    view.add_item(TicketSelect())
-    await ctx.send("Επίλεξε κατηγορία:", view=view)
+@bot.tree.command(name="avatar", description="Show user avatar")
+async def avatar(interaction: discord.Interaction, member: discord.Member):
+    await interaction.response.send_message(member.display_avatar.url)
+
+@bot.tree.command(name="slowmode", description="Set slowmode")
+@app_commands.checks.has_permissions(manage_channels=True)
+async def slowmode(interaction: discord.Interaction, seconds: int):
+    await interaction.channel.edit(slowmode_delay=seconds)
+    await interaction.response.send_message(f"Slowmode set to {seconds}s")
+
+@bot.tree.command(name="roleinfo", description="Get role info")
+async def roleinfo(interaction: discord.Interaction, role: discord.Role):
+    await interaction.response.send_message(f"Role: {role.name} | ID: {role.id} | Members: {len(role.members)}")
+
+@bot.tree.command(name="botinfo", description="Bot status")
+async def botinfo(interaction: discord.Interaction):
+    await interaction.response.send_message("Zerox is running smoothly for the PlayStation community.")
+
+@bot.tree.command(name="say", description="Make bot say something")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def say(interaction: discord.Interaction, message: str):
+    await interaction.channel.send(message)
+    await interaction.response.send_message("Message sent", ephemeral=True)
+
+@bot.tree.command(name="addrole", description="Add role to member")
+@app_commands.checks.has_permissions(manage_roles=True)
+async def addrole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
+    await member.add_roles(role)
+    await interaction.response.send_message(f"Added {role.name} to {member.name}")
+
+@bot.tree.command(name="removerole", description="Remove role from member")
+@app_commands.checks.has_permissions(manage_roles=True)
+async def removerole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
+    await member.remove_roles(role)
+    await interaction.response.send_message(f"Removed {role.name} from {member.name}")
+
+@bot.tree.command(name="nuke", description="Delete and recreate channel")
+@app_commands.checks.has_permissions(manage_channels=True)
+async def nuke(interaction: discord.Interaction):
+    new_channel = await interaction.channel.clone()
+    await interaction.channel.delete()
+    await new_channel.send("Channel nuked")
 
 bot.run(os.environ.get("DISCORD_TOKEN"))
